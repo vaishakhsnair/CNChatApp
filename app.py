@@ -36,6 +36,9 @@ class ConnectionManager:
         # Map of usernames to their WebSocket connections
         self.connections: Dict[str, WebSocket] = {}
 
+    def is_recipient_available(self, to_username: str):
+        return to_username in self.connections
+
     async def connect(self, username: str, websocket: WebSocket):
         await websocket.accept()
         self.connections[username] = websocket
@@ -79,6 +82,19 @@ async def chat_endpoint(websocket: WebSocket, from_username: str, to_username: s
             await recipient_connection.send_text(
                 Message(from_username, "User has left the chat", to_username, "error").jsonify()
             )
+@app.get("/api/userlist")
+async def get_user_list():
+    return {
+        "users": list(manager.connections.keys())
+    }
+
+@app.get("/api/useronline/{username}")
+async def is_user_online(username: str):
+    return {
+            "username"  : username,
+            "online": manager.is_recipient_available(username)
+        }
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
