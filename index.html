@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat Client</title>
+</head>
+<body>
+    <h1>WebSocket Chat</h1>
+    <input type="text" id="fromUsername" placeholder="Your username" />
+    <input type="text" id="toUsername" placeholder="Recipient username" />
+    <button onclick="connect()">Connect</button>
+    <br><br>
+    <div id="chatbox" style="border: 1px solid black; width: 300px; height: 400px; overflow-y: scroll;"></div>
+    <br>
+    <input type="text" id="messageInput" placeholder="Enter message" disabled />
+    <button onclick="sendMessage()" disabled>Send</button>
+
+    <script>
+        let websocket;
+        let fromUsername;
+        let toUsername;
+
+        function connect() {
+            fromUsername = document.getElementById('fromUsername').value;
+            toUsername = document.getElementById('toUsername').value;
+
+            if (!fromUsername || !toUsername) {
+                alert('Please enter both your username and the recipient\'s username.');
+                return;
+            }
+
+            websocket = new WebSocket(`ws://localhost:8000/api/chat/${fromUsername}/${toUsername}`);
+
+            websocket.onopen = function(event) {
+                document.getElementById('messageInput').disabled = false;
+                document.querySelector('button[onclick="sendMessage()"]').disabled = false;
+                document.getElementById('chatbox').innerHTML += '<p>Connected to chat</p>';
+            };
+
+            websocket.onmessage = function(event) {
+                const chatbox = document.getElementById('chatbox');
+                const message = JSON.parse(event.data);
+
+                if(message.type === 'error') {
+                    chatbox.innerHTML += `<p><strong>Error:</strong> ${message.message}</p>`;
+                    return;
+                }
+
+                if (message.from === fromUsername) {
+                    chatbox.innerHTML +=         `<p><strong>You:</strong> ${message.message}</p>`;
+                    return;
+                }
+
+
+
+                chatbox.innerHTML += `<p><strong>${message.from}:</strong> ${message.message}</p>`;
+                chatbox.scrollTop = chatbox.scrollHeight;
+            };
+
+            websocket.onclose = function(event) {
+                document.getElementById('messageInput').disabled = true;
+                document.querySelector('button[onclick="sendMessage()"]').disabled = true;
+                document.getElementById('chatbox').innerHTML += '<p>Disconnected from chat</p>';
+            };
+        }
+
+        function sendMessage() {
+            const message = document.getElementById('messageInput').value;
+            websocket.send(message);
+            document.getElementById('messageInput').value = '';
+        }
+    </script>
+</body>
+</html>
