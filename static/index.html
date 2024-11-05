@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat Client</title>
+</head>
+<body>
+    <h1>WebSocket Chat</h1>
+    <input type="text" id="fromUsername" placeholder="Your username" />
+    <button onclick="connectToServer()">Go Online</button>
+    <br><br>
+    
+    <div>
+        <h3>Online Users:</h3>
+        <table id="onlineUsersTable" border="1">
+            <thead>
+                <tr>
+                    <th>Username</th>
+                    <th>Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- Online users will be listed here -->
+            </tbody>
+        </table>
+    </div>
+    <br>
+    
+    <button onclick="disconnect()" disabled>Disconnect</button>
+    <div id="chatbox" style="border: 1px solid black; width: 300px; height: 400px; overflow-y: scroll;"></div>
+    <br>
+    <input type="text" id="messageInput" placeholder="Enter message" disabled />
+    <button onclick="sendMessage()" disabled>Send</button>
+
+    <script>
+    let presenceWebSocket; // WebSocket for online presence updates
+let chatWebSocket; // Separate WebSocket for chatting with a user
+let fromUsername;
+let toUsername;
+let pollInterval;
+
+async function connectToServer() {
+    fromUsername = document.getElementById('fromUsername').value;
+    if (!fromUsername) {
+        alert('Please enter your username first.');
+        return;
+    }
+
+    // Establish WebSocket connection for online presence
+    presenceWebSocket = new WebSocket(`ws://localhost:8000/api/connect/${fromUsername}`);
+    
+    presenceWebSocket.onopen = function() {
+        document.querySelector('button[onclick="disconnect()"]').disabled = false;
+        document.getElementById('chatbox').innerHTML += `<p>You are now online as ${fromUsername}</p>`;
+        
+        // Start polling for other online users
+        pollInterval = setInterval(fetchOnlineUsers, 5000);
+        fetchOnlineUsers();
+    };
+
+    presenceWebSocket.onmessage = function(event) {
+        const chatbox = document.getElementById('chatbox');
+        const message = JSON.parse(event.data);
+
+        if (message.type === 'status') {
+            chatbox.innerHTML += `<p><strong>Status:</strong> ${message.from} ${message.message}</p>`;
+        }
+        chatbox.scrollTop = chatbox.scrollHeight;
+    };
+
+    presenceWebSocket.onclose = function() {
+        clearInterval(pollInterval);
+        document.getElementById('messageInput').disabled = true;
+        document.querySelector('button[onclick="sendMessage()"]').disabled = true;
+        document.querySelector('button[onclick="disconnect()"]').disabled = true;
+        document.getElementById('chatbox').innerHTML += '<p>Disconnected from server</p>';
+    };
+}
+
+async function fetchOnlineUsers() {
+    const response = await fetch('http://localhost:8000/api/userlist');
+    const data = await response.json();
+
+    const onlineUsersTable = document.getElementById('onlineUsersTable').getElementsByTagName('tbody')[0];
+    onlineUsersTable.innerHTML = ''; // Clear current users
+
+    data.users.forEach(user => {
+        if (user !== fromUsername) {  // Exclude the current user
+            const row = onlineUsersTable.insertRow();
+            const cellUsername = row.insertCell(0);
+            const cellAction = row.insertCell(1);
+            
+            cellUsername.textContent = user;
+            const button = document.createElement('button');
+            button.textContent = "Chat";
+            button.onclick = () => connectToUser(user);
+            cellAction.appendChild(button);
+        }
+    });
+}
+
+function connectToUser(selectedUser) {
+    toUsername = selectedUser;
+
+    if (!fromUsername || !toUsername) {
+        alert('Please enter both your username and select a recipient.');
+        return;
+    }
+
+    // Close any existing chat connection first
+    if (chatWebSocket) {
+        chatWebSocket.close();
+    }
+    
+    // Create a new WebSocket for the chat with the selected user
+    chatWebSocket = new WebSocket(`ws://localhost:8000/api/chat?from_username=${fromUsername}&to_username=${toUsername}`);
+
+    chatWebSocket.onopen = function() {
+        document.getElementById('messageInput').disabled = false;
+        document.querySelector('button[onclick="sendMessage()"]').disabled = false;
+        document.getElementById('chatbox').innerHTML += `<p>Connected to chat with ${toUsername}</p>`;
+    };
+
+    chatWebSocket.onmessage = function(event) {
+        const message = JSON.parse(event.data);
+        const chatbox = document.getElementById('chatbox');
+        
+        if (message.from === fromUsername) {
+            chatbox.innerHTML += `<p><strong>You:</strong> ${message.message}</p>`;
+        } else {
+            chatbox.innerHTML += `<p><strong>${message.from}:</strong> ${message.message}</p>`;
+        }
+        chatbox.scrollTop = chatbox.scrollHeight;
+    };
+}
+
+function disconnect() {
+    if (presenceWebSocket) {
+        presenceWebSocket.close();
+    }
+    if (chatWebSocket) {
+        chatWebSocket.close();
+    }
+}
+
+function sendMessage() {
+    const message = document.getElementById('messageInput').value;
+    console.log("Sending message:", message);
+
+    if (chatWebSocket && chatWebSocket.readyState === WebSocket.OPEN) {
+        chatWebSocket.send(JSON.stringify({
+            from: fromUsername,
+            to: toUsername,
+            message: message
+        }));
+    } else {
+        console.error("Chat WebSocket is not open.");
+    }
+    document.getElementById('messageInput').value = '';
+}
+
+    </script>
+</body>
+</html>

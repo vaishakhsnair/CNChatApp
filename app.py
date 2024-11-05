@@ -1,5 +1,7 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from typing import Dict
 import json
 import uvicorn
@@ -17,7 +19,7 @@ app.add_middleware(
 
 
 class Message:
-    def __init__(self, from_username: str, message: str, to_username: str,message_type = "message"):
+    def __init__(self, from_username: str, message: str, to_username: str, message_type="message"):
         self.username = from_username
         self.message = message
         self.to_username = to_username
@@ -31,6 +33,7 @@ class Message:
             "to": self.to_username,
         })
 
+
 class ConnectionManager:
     def __init__(self):
         # Map of usernames to their WebSocket connections
@@ -39,61 +42,97 @@ class ConnectionManager:
     def is_recipient_available(self, to_username: str):
         return to_username in self.connections
 
-    async def connect(self, username: str, websocket: WebSocket):
-        await websocket.accept()
+    async def connect(self,websocket: WebSocket, username: str):
+
+        await websocket.accept()        
         self.connections[username] = websocket
+
 
     def disconnect(self, username: str):
         if username in self.connections:
             del self.connections[username]
 
     async def send_message(self, from_username: str, to_username: str, message: str):
+        print(self.connections)
         if to_username in self.connections:
             to_connection = self.connections[to_username]
-            from_connection = self.connections[from_username]
-
-            await from_connection.send_text(
-                Message(from_username, message, to_username).jsonify()
-            )
-            await to_connection.send_text(
-                Message(from_username, message, to_username).jsonify()
-            )
-        else:
-            if from_username in self.connections:
-                from_connection = self.connections[from_username]
+            from_connection = self.connections[from_username]   
+            try:
                 await from_connection.send_text(
-                    Message(from_username, "User is not available", to_username, "error").jsonify()
+                    Message(from_username, message, to_username).jsonify()
                 )
+                await to_connection.send_text(
+                    Message(from_username, message, to_username).jsonify()
+                )
+            except RuntimeError:
+                pass  # Handle any unexpected disconnects during send
+
+    async def broadcast_status(self, username: str, status_message: str):
+        # Broadcast user's status to all users except themselves
+        for user, connection in self.connections.items():
+            if user != username:
+                try:
+                    await connection.send_text(
+                        Message(username, status_message, user, "status").jsonify()
+                    )
+                except RuntimeError:
+                    pass  # Ignore if user disconnected unexpectedly
+
 
 manager = ConnectionManager()
 
-@app.websocket("/api/chat/{from_username}/{to_username}")
+
+@app.websocket("/api/chat")
 async def chat_endpoint(websocket: WebSocket, from_username: str, to_username: str):
-    await manager.connect(from_username, websocket)
+    print(from_username, to_username)
+    print(websocket)
+    await manager.connect(websocket, from_username)
     try:
         while True:
             data = await websocket.receive_text()
-            await manager.send_message(from_username, to_username, data)
+            data = json.loads(data)
+            await manager.send_message(data["from"], data["to"], data["message"])
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)   
+    
+
+
+@app.websocket("/api/connect/{from_username}")
+async def connect_endpoint(websocket: WebSocket, from_username: str):
+    await manager.connect(websocket,from_username)
+    try:
+        # Broadcast that the user is online to all other users
+        await manager.broadcast_status(from_username, "User is online")
+        while True:
+            # Keep the connection open
+            await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(from_username)
-        # Notify the recipient if needed
-        if to_username in manager.connections:
-            recipient_connection = manager.connections[to_username]
-            await recipient_connection.send_text(
-                Message(from_username, "User has left the chat", to_username, "error").jsonify()
-            )
+        # Broadcast that the user is offline to all other users
+        await manager.broadcast_status(from_username, "User is offline")
+
+
 @app.get("/api/userlist")
 async def get_user_list():
     return {
         "users": list(manager.connections.keys())
     }
 
+
 @app.get("/api/useronline/{username}")
 async def is_user_online(username: str):
     return {
-            "username"  : username,
-            "online": manager.is_recipient_available(username)
-        }
+        "username": username,
+        "online": manager.is_recipient_available(username)
+    }
+
+
+app.mount("/static", StaticFiles(directory="static", html=True), name="static")
+
+
+@app.get("/")
+async def read_index():
+    return FileResponse('static/index.html')
 
 
 if __name__ == "__main__":
